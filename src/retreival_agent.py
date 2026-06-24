@@ -1,12 +1,17 @@
+import asyncio
+
 from langchain.agents import create_agent
 from config import llm
 from langchain.agents.middleware import dynamic_prompt, ModelRequest
 from config import vector_store
 
 @dynamic_prompt
-def prompt_with_context(request: ModelRequest) -> str:
+async def prompt_with_context(request: ModelRequest) -> str:
     last_query = request.state["messages"][-1].text
-    retrieved_docs = vector_store.similarity_search(last_query)
+    retrieved_docs = await asyncio.to_thread(
+        vector_store.similarity_search,
+        last_query,
+    )
 
     docs_content = "\n\n".join(doc.page_content for doc in retrieved_docs)
 

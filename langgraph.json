@@ -3,7 +3,7 @@
   "python_version": "3.13",
   "dependencies": ["."],
   "graphs": {
-    "agent": "simple_agent.graph:graph"
+    "my_agent": "./src/graph.py:agent"
   },
   "env": ".env",
   "image_distro": "wolfi"

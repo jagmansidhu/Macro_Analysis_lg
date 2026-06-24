@@ -1,6 +1,6 @@
 from langgraph.pregel import Pregel
 
-from simple_agent.graph import calculator, graph, utc_now
+from graph import calculator, graph, utc_now
 
 
 def test_graph_compiles() -> None:

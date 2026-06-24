@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from simple_agent.graph import graph
+from graph import graph
 
 pytestmark = pytest.mark.anyio
 
