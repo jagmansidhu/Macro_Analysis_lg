@@ -44,7 +44,7 @@ def load_local_directory(directory_path: str, glob_pattern: str) -> list[Documen
                     continue
 
                 val_col = [k for k in reader.fieldnames if k != date_col][0]
-                metric_name = file_path.stem
+                metric_name = re.sub(r"\s*\(\d+\)$", "", file_path.stem)
 
                 for row in rows:
                     date = (row.get(date_col) or "").strip()

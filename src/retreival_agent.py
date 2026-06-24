@@ -30,11 +30,20 @@ async def get_latest_data(metric: str, n: int = 5) -> str:
                 FEDFUNDS (Monthly Fed Funds Rate), DGS2 (2-Year Treasury Yield).
         n: Number of most recent data points to return (default 5).
     """
+    # Try exact metric filter first
     results = await vector_store.asimilarity_search(
         query=f"most recent {metric} data",
         k=100,
         filter={"metric": metric},
     )
+
+    # Fallback: broader search filtered in Python (handles stored names like "CPILFESL (1)")
+    if not results:
+        results = await vector_store.asimilarity_search(
+            query=f"most recent {metric} data",
+            k=200,
+        )
+        results = [doc for doc in results if metric in doc.metadata.get("metric", "")]
 
     if not results:
         return f"No data found for metric '{metric}'."
