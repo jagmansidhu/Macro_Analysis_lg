@@ -6,7 +6,7 @@ from simple_agent.graph import graph
 
 pytestmark = pytest.mark.anyio
 
-if not os.getenv("ANTHROPIC_API_KEY"):
+if not os.getenv("CLOD_API_KEY"):
     pytest.skip("Set ANTHROPIC_API_KEY to run integration tests.", allow_module_level=True)
 
 
