@@ -17,6 +17,7 @@ if not CLOD_API_KEY:
 
 llm = ChatOpenAI(
     model=MODEL,
+    # temperature=0,
     api_key=CLOD_API_KEY,
     base_url="https://api.clod.io/v1",
 )
@@ -27,12 +28,20 @@ embeddings = GoogleGenerativeAIEmbeddings(
     output_format=1536,
 )
 
-COLLECTION_NAME = "my_docs_v4"
+COLLECTION_NAME = "my_docs_v5"
 
 vector_store = PGVector(
     embeddings=embeddings,
     collection_name=COLLECTION_NAME,
     connection=DB_URL,
+    async_mode=True,
+)
+
+vector_store_sync = PGVector(
+    embeddings=embeddings,
+    collection_name=COLLECTION_NAME,
+    connection=DB_URL,
+    async_mode=False,
 )
 
 namespace = f"pgvector/{COLLECTION_NAME}"
