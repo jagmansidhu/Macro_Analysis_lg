@@ -1,5 +1,6 @@
 import os
 
+from langchain_ollama import OllamaEmbeddings
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_openai import ChatOpenAI
@@ -22,10 +23,15 @@ llm = ChatOpenAI(
     base_url="https://api.clod.io/v1",
 )
 
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="gemini-embedding-2",
-    api_key=GEMINI_API_KEY,
-    output_format=1536,
+# embeddings = GoogleGenerativeAIEmbeddings(
+#     model="gemini-embedding-2",
+#     api_key=GEMINI_API_KEY,
+#     output_format=1536,
+# )
+
+embeddings = OllamaEmbeddings(
+    model="qwen3-embedding:8b",
+    dimensions=1024,
 )
 
 COLLECTION_NAME = "my_docs_v5"
