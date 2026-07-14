@@ -17,7 +17,7 @@ if __name__ == "__main__":
 
     print("Testing the macro-economic retrieval pipeline...\n")
 
-    inputs = {"messages": [HumanMessage(content="What was the UNRATE in 2020?")]}
+    inputs = {"messages": [HumanMessage(content="What was the DFF in 2020?")]}
 
     for event in main_graph.stream(inputs, stream_mode="values"):
         last_message = event["messages"][-1]

@@ -3,9 +3,11 @@ from langchain_core.tools.retriever import create_retriever_tool
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 
-from config import llm, vector_store
+# IMPORT BOTH STORES FROM YOUR CONFIG
+from config import llm, vector_store, vector_store_sync
 
-retriever = vector_store.as_retriever(search_kwargs={"k": 20})
+# 1. Use the SYNC store for the standard retriever tool
+retriever = vector_store_sync.as_retriever(search_kwargs={"k": 20})
 
 retriever_tool = create_retriever_tool(
     retriever,
@@ -30,7 +32,7 @@ async def get_latest_data(metric: str, n: int = 5) -> str:
                 FEDFUNDS (Monthly Fed Funds Rate), DGS2 (2-Year Treasury Yield).
         n: Number of most recent data points to return (default 5).
     """
-    # Try exact metric filter first
+    # 2. Keep using the ASYNC store here because this is an async def tool
     results = await vector_store.asimilarity_search(
         query=f"most recent {metric} data",
         k=100,
