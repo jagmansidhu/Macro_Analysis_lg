@@ -1,7 +1,13 @@
 from __future__ import annotations
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from langgraph.graph import StateGraph, MessagesState, START, END
 
 from retreival_agent import retrieval_agent
+
 
 builder = StateGraph(MessagesState)
 

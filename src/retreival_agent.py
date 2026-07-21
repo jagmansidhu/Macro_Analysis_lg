@@ -1,13 +1,12 @@
-from langchain_core.tools import tool
-from langchain_core.tools.retriever import create_retriever_tool
+import asyncio
+
+from config import llm, vector_store
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langchain_core.tools.retriever import create_retriever_tool
 
-# IMPORT BOTH STORES FROM YOUR CONFIG
-from config import llm, vector_store, vector_store_sync
-
-# 1. Use the SYNC store for the standard retriever tool
-retriever = vector_store_sync.as_retriever(search_kwargs={"k": 20})
+retriever = vector_store.as_retriever(search_kwargs={"k": 20})
 
 retriever_tool = create_retriever_tool(
     retriever,
@@ -77,9 +76,12 @@ retrieval_agent = create_agent(
     system_prompt=system_prompt
 )
 
-if __name__ == "__main__":
+async def main():
     inputs = {"messages": [HumanMessage(content="What is the most recent CPI data?")]}
 
-    for chunk in retrieval_agent.stream(inputs, stream_mode="values"):
+    async for chunk in retrieval_agent.astream(inputs, stream_mode="values"):
         last_message = chunk["messages"][-1]
         last_message.pretty_print()
+
+if __name__ == "__main__":
+    asyncio.run(main())
