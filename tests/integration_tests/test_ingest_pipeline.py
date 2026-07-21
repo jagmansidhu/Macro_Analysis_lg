@@ -15,9 +15,11 @@ import psycopg
 import pytest
 from langchain_core.indexing import index
 
-# Skip entire module if Gemini key is missing
+# Skip entire module if required env is missing
 if not os.getenv("GEMINI_API_KEY"):
     pytest.skip("GEMINI_API_KEY not set — skipping ingest integration tests.", allow_module_level=True)
+if not os.getenv("DB_CONNECTION_STRING"):
+    pytest.skip("DB_CONNECTION_STRING not set — skipping ingest integration tests.", allow_module_level=True)
 
 from langchain_classic.indexes import SQLRecordManager
 from langchain_postgres import PGVector
