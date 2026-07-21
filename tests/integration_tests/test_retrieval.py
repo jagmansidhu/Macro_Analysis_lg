@@ -23,6 +23,8 @@ if not os.getenv("CLOD_API_KEY"):
     pytest.skip("CLOD_API_KEY not set — skipping retrieval integration tests.", allow_module_level=True)
 if not os.getenv("GEMINI_API_KEY"):
     pytest.skip("GEMINI_API_KEY not set — skipping retrieval integration tests.", allow_module_level=True)
+if not os.getenv("DB_CONNECTION_STRING"):
+    pytest.skip("DB_CONNECTION_STRING not set — skipping retrieval integration tests.", allow_module_level=True)
 
 from langchain_core.messages import HumanMessage
 
