@@ -62,14 +62,24 @@ def test_record_manager(test_vector_store):
     yield rm
 
 
+def _with_test_scoped_sources(docs: list) -> list:
+    for doc in docs:
+        doc.metadata["source"] = f"test://{TEST_COLLECTION}/{doc.metadata['source']}"
+    return docs
+
+
 @pytest.fixture(scope="session")
 def cpilfesl_docs(fred_data_dir):
-    return load_local_directory(str(fred_data_dir), "CPILFESL*.csv")
+    return _with_test_scoped_sources(
+        load_local_directory(str(fred_data_dir), "CPILFESL*.csv")
+    )
 
 
 @pytest.fixture(scope="session")
 def all_docs(fred_data_dir):
-    return load_local_directory(str(fred_data_dir), "*.csv")
+    return _with_test_scoped_sources(
+        load_local_directory(str(fred_data_dir), "*.csv")
+    )
 
 
 @pytest.fixture(scope="session")
@@ -130,6 +140,8 @@ class TestIngestCorrectness:
 
     def test_metadata_round_trips_correctly(self, ingest_result, test_vector_store):
         results = test_vector_store.similarity_search("CPILFESL 2020", k=10)
+
+        assert len(results) > 0, "No results returned for CPILFESL 2020 search"
 
         for doc in results:
             assert doc.metadata.get("metric") == "CPILFESL"

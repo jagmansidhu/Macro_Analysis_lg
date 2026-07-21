@@ -26,8 +26,17 @@ class AnalysisRecord(Base):
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
-engine = create_engine(DB_URL)
-Base.metadata.create_all(engine)
+_engine = None
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_engine(DB_URL)
+    return _engine
+
+def init_db():
+    """Initialize the database schema."""
+    Base.metadata.create_all(get_engine())
 
 
 def _embed_text(text: str) -> list[float]:
@@ -47,7 +56,7 @@ def save_profile(profile, user_query: str | None = None) -> int:
         user_query=user_query,
         query_embedding=query_vec,
     )
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         session.add(record)
         session.commit()
         row_id = record.id
@@ -58,7 +67,7 @@ def save_profile(profile, user_query: str | None = None) -> int:
 
 def update_profile(record_id: int, profile) -> int:
     """Update an existing analysis record with new profile data. Returns the record id."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         record = session.get(AnalysisRecord, record_id)
         if record is None:
             print(f"[Memory] Record id={record_id} not found, saving as new.")
@@ -86,7 +95,7 @@ def search_past_analyses(query: str, top_k: int = 3, similarity_threshold: float
     # Use pgvector's cosine distance operator: <=> returns distance (1 - similarity)
     distance = AnalysisRecord.query_embedding.cosine_distance(query_vec).label("distance")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         rows = (
             session.query(AnalysisRecord, distance)
             .filter(AnalysisRecord.query_embedding.isnot(None))
