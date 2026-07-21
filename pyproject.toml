@@ -10,6 +10,7 @@ dependencies = [
     "langchain-anthropic>=1.0.0",
     "langchain-classic>=1.0.8",
     "langchain-community>=0.4.2",
+    "langchain-core>=1.4.8",
     "langchain-google-genai>=4.2.5",
     "langchain-openai>=1.3.3",
     "langchain-postgres>=0.0.17",
@@ -30,5 +31,11 @@ dev = [
 ]
 
 [tool.uv.build-backend]
-module-name = "simple_agent"
+module-name = "graph"
 source-include = ["langgraph.json", ".env.example", "Makefile", "tests/**"]
+
+#[tool.pytest.ini_options]
+#filterwarnings = [
+#    "ignore:The default value of `allowed_objects` will change:langchain_core.utils.exceptions.LangChainPendingDeprecationWarning",
+#    "ignore:The default value of `allowed_objects` will change:DeprecationWarning"
+#]

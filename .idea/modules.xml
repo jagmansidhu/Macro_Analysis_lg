@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/Macro_Analysis_lg.iml" filepath="$PROJECT_DIR$/.idea/Macro_Analysis_lg.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/simple-agent-template.iml" filepath="$PROJECT_DIR$/.idea/simple-agent-template.iml" />
     </modules>
   </component>
 </project>

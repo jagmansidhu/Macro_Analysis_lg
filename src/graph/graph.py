@@ -1,7 +1,13 @@
 from __future__ import annotations
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from langgraph.graph import StateGraph, MessagesState, START, END
 
-from retreival_agent import retrieval_agent
+from RAG.retreival_agent import retrieval_agent
+
 
 builder = StateGraph(MessagesState)
 
@@ -17,7 +23,7 @@ if __name__ == "__main__":
 
     print("Testing the macro-economic retrieval pipeline...\n")
 
-    inputs = {"messages": [HumanMessage(content="What was the UNRATE in 2020?")]}
+    inputs = {"messages": [HumanMessage(content="What was the DFF in 2020?")]}
 
     for event in main_graph.stream(inputs, stream_mode="values"):
         last_message = event["messages"][-1]

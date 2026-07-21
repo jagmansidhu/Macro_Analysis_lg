@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from langchain_core.documents import Document
 from langchain_core.indexing import index

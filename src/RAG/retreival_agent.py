@@ -1,9 +1,10 @@
-from langchain_core.tools import tool
-from langchain_core.tools.retriever import create_retriever_tool
-from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+import asyncio
 
 from config import llm, vector_store
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langchain_core.tools.retriever import create_retriever_tool
 
 retriever = vector_store.as_retriever(search_kwargs={"k": 20})
 
@@ -30,7 +31,7 @@ async def get_latest_data(metric: str, n: int = 5) -> str:
                 FEDFUNDS (Monthly Fed Funds Rate), DGS2 (2-Year Treasury Yield).
         n: Number of most recent data points to return (default 5).
     """
-    # Try exact metric filter first
+    # 2. Keep using the ASYNC store here because this is an async def tool
     results = await vector_store.asimilarity_search(
         query=f"most recent {metric} data",
         k=100,
@@ -75,9 +76,12 @@ retrieval_agent = create_agent(
     system_prompt=system_prompt
 )
 
-if __name__ == "__main__":
+async def main():
     inputs = {"messages": [HumanMessage(content="What is the most recent CPI data?")]}
 
-    for chunk in retrieval_agent.stream(inputs, stream_mode="values"):
+    async for chunk in retrieval_agent.astream(inputs, stream_mode="values"):
         last_message = chunk["messages"][-1]
         last_message.pretty_print()
+
+if __name__ == "__main__":
+    asyncio.run(main())
