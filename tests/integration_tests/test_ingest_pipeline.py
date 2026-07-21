@@ -116,22 +116,20 @@ class TestIngestCorrectness:
             f"Record manager has {indexed_count} keys, CSV has {len(cpilfesl_docs)} rows"
         )
 
-    def test_retrieved_content_matches_csv_exactly(self, ingest_result):
-        from config import vector_store_sync
+    def test_retrieved_content_matches_csv_exactly(self, ingest_result, test_vector_store):
         # 2020-01-01 CPILFESL = 266.716 (known ground truth from CSV)
-        results = vector_store_sync.similarity_search(
+        results = test_vector_store.similarity_search(
             query="CPILFESL January 2020",
             k=5,
             filter={"metric": "CPILFESL", "date": "2020-01-01"},
         )
-        assert len(results) >= 1, "2020-01-01 CPILFESL not found in production store"
+        assert len(results) >= 1, "2020-01-01 CPILFESL not found in test store"
         assert "266.716" in results[0].page_content, (
             f"Expected 266.716 in page_content, got: {results[0].page_content!r}"
         )
 
-    def test_metadata_round_trips_correctly(self, ingest_result):
-        from config import vector_store_sync
-        results = vector_store_sync.similarity_search("CPILFESL 2020", k=10)
+    def test_metadata_round_trips_correctly(self, ingest_result, test_vector_store):
+        results = test_vector_store.similarity_search("CPILFESL 2020", k=10)
 
         for doc in results:
             assert doc.metadata.get("metric") == "CPILFESL"
