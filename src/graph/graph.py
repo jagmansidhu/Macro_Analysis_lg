@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from langgraph.graph import StateGraph, MessagesState, START, END
 
-from retreival_agent import retrieval_agent
+from RAG.retreival_agent import retrieval_agent
 
 
 builder = StateGraph(MessagesState)

@@ -2,15 +2,11 @@
 
 from datetime import datetime, timezone
 
+from config import DB_URL, embeddings, EMBEDDING_DIM
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, select
+from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Session
-
-from config import DB_URL, embeddings
-
-EMBEDDING_DIM = 1536  # matches output_dimensionality in config.py
-
 
 class Base(DeclarativeBase):
     pass

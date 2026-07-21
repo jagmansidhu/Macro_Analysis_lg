@@ -8,6 +8,8 @@ from langchain_classic.indexes import SQLRecordManager
 
 load_dotenv()
 
+EMBEDDING_DIM = 1536
+
 CLOD_API_KEY = os.getenv("CLOD_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DB_URL = os.getenv("DB_CONNECTION_STRING")
@@ -25,7 +27,7 @@ llm = ChatOpenAI(
 embeddings = GoogleGenerativeAIEmbeddings(
     model="gemini-embedding-2",
     google_api_key=GEMINI_API_KEY,
-    output_dimensionality=1536,
+    output_dimensionality=EMBEDDING_DIM,
 )
 
 # Ollama alternative (install langchain-ollama and uncomment to use locally):
