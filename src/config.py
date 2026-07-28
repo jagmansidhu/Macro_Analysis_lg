@@ -14,6 +14,12 @@ CLOD_API_KEY = os.getenv("CLOD_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DB_URL = os.getenv("DB_CONNECTION_STRING")
 MODEL = os.getenv("SIMPLE_AGENT_MODEL")
+FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY", "")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+# Comma-separated list of directories to watch for new data files
+WATCH_DIRS = os.getenv("WATCH_DIRS", "fred_fed_data,research_docs").split(",")
+
 if not CLOD_API_KEY:
     raise ValueError("CLOD_API_KEY is not set")
 
