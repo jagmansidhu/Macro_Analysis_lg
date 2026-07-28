@@ -2,9 +2,11 @@
 
 ## What this project does
 
-Multi-agent macroeconomic analysis system built on LangGraph. It ingests FRED CSV data into a
-pgvector-backed Postgres database and exposes a retrieval agent that answers questions about
-macroeconomic indicators (CPI, Fed Funds Rate, Treasury yields, etc.) using semantic search.
+Multi-agent macroeconomic researcher built on LangGraph. It ingests data from multiple
+sources — FRED CSV files, research PDFs, the FRED REST API, and arbitrary web pages —
+into a pgvector-backed Postgres database. A five-tool ReAct retrieval agent answers
+questions from analysis agents using semantic search, with automatic fallback to live
+data sources when the DB doesn't have an answer.
 
 ---
 
@@ -12,20 +14,34 @@ macroeconomic indicators (CPI, Fed Funds Rate, Treasury yields, etc.) using sema
 
 ```
 langgraph.json
-  └── src/graph/graph.py            # LangGraph entrypoint — compiles main_graph
-        └── src/retreival_agent.py  # ReAct agent with two tools:
-              ├── search_fred_macro_data  (sync PGVector retriever, top-20)
-              └── get_latest_data         (async PGVector search, sorted by date)
+  └── src/graph/graph.py              # LangGraph entrypoint — runs startup ingest,
+        │                             # starts file watcher, compiles main_graph
+        └── src/RAG/retreival_agent.py  # Five-tool ReAct researcher agent
+              ├── search_pgvector          (semantic search, always first)
+              ├── get_latest_data          (most-recent N rows, sorted by date)
+              ├── fetch_fred_api           (live FRED REST API pull → index)
+              ├── fetch_web_page           (Firecrawl / httpx scrape → index)
+              └── search_web_news          (Firecrawl topic search → index)
 
-src/config.py             # LLM, embeddings, PGVector stores, SQLRecordManager
-src/memory.py             # SQLAlchemy ORM for analysis_records table (vector search)
-src/fred_data_ingest.py   # One-shot script: reads CSV files → indexes into pgvector
+src/config.py             # LLM, embeddings, PGVector stores, SQLRecordManager,
+                          # FRED_API_KEY, FIRECRAWL_API_KEY, WATCH_DIRS
+src/RAG/ingest_state.py   # SHA-256 hash sidecar for incremental ingest tracking
+src/RAG/watcher.py        # watchdog daemon — auto-indexes file changes at runtime
+src/RAG/fred_data_ingest.py  # CLI: run_incremental_ingestion / run_full_ingestion
+src/RAG/memory.py         # SQLAlchemy ORM for analysis_records table (vector search)
+src/RAG/sources/
+  ├── base.py             # BaseSource ABC + IndexingResult dataclass
+  ├── local_file_source.py  # CSV / PDF / TXT ingestion (used by watcher)
+  ├── fred_api_source.py    # FRED REST API live pull
+  └── web_source.py         # Firecrawl + httpx web scraper
 ```
 
 **Data flow**:
-1. Run `fred_data_ingest.py` once to populate the vector store from `fred_fed_data/*.csv`
-2. Run `langgraph dev` (or `make run`) to start the LangGraph API server
-3. Send messages to the `my_agent` graph endpoint
+1. At startup `graph.py` runs `run_incremental_ingestion()` (catches offline additions)
+2. `graph.py` starts the watchdog daemon thread — new/changed files auto-index in ~2s
+3. Run `langgraph dev` (or `make run`) to start the LangGraph API server
+4. Analysis agents send messages to the `my_agent` graph endpoint
+5. The researcher agent queries PGVector first; falls back to live sources as needed
 
 ---
 
@@ -38,6 +54,9 @@ src/fred_data_ingest.py   # One-shot script: reads CSV files → indexes into pg
 | `GEMINI_API_KEY` | Google Gemini API key for `GoogleGenerativeAIEmbeddings` — **required** |
 | `DB_CONNECTION_STRING` | Full postgres connection string, e.g. `postgresql+psycopg://user:pass@localhost:5432/macro_db` |
 | `LANGSMITH_API_KEY` | Optional — enables LangSmith tracing |
+| `FRED_API_KEY` | Optional — enables live FRED REST API pulls. Free at fred.stlouisfed.org |
+| `FIRECRAWL_API_KEY` | Optional — enables Firecrawl web scraping. Falls back to httpx if unset |
+| `WATCH_DIRS` | Comma-separated dirs to watch for new files (default: `fred_fed_data,research_docs`) |
 
 ---
 
@@ -50,8 +69,11 @@ make test             # pytest tests/unit_tests
 make lint             # ruff check
 make format           # ruff format
 
-# One-time data ingestion
-uv run python src/fred_data_ingest.py
+# Incremental ingestion (only new/changed files — fast, safe to run anytime)
+uv run python src/RAG/fred_data_ingest.py
+
+# Full re-index (all files unconditionally — use for resets)
+uv run python src/RAG/fred_data_ingest.py full
 
 # Smoke test the graph directly
 uv run python src/graph/graph.py

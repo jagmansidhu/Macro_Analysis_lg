@@ -1,44 +1,86 @@
-import asyncio
+"""RAG Orchestrator — the researcher brain.
 
-from config import llm, vector_store
+Exposes a five-tool ReAct agent to any analysis agent that needs information:
+
+  1. search_pgvector      — semantic search over all indexed content (always first)
+  2. get_latest_data      — most-recent N rows for a known metric, sorted by date
+  3. fetch_fred_api       — pull live FRED series data and index it
+  4. fetch_web_page       — scrape a URL via Firecrawl / httpx and index it
+  5. search_web_news      — Firecrawl-powered news search for macro topics
+
+Routing rules (embedded in system prompt):
+  - Always try search_pgvector first (fast, free, cached).
+  - For "latest" / "current" data: use get_latest_data.
+  - For a FRED series not in the DB or if DB results are stale: use fetch_fred_api.
+  - For news articles, reports, or arbitrary URLs: use fetch_web_page.
+  - For broad macro news queries: use search_web_news.
+"""
+
+import asyncio
+import logging
+
+from config import llm, vector_store, vector_store_sync, record_manager
+from config import FRED_API_KEY, FIRECRAWL_API_KEY, TAVILY_API_KEY
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langchain_core.tools.retriever import create_retriever_tool
 
-retriever = vector_store.as_retriever(search_kwargs={"k": 20})
+from RAG.sources.local_file_source import LocalFileSource
+from RAG.sources.fred_api_source import FredApiSource
+from RAG.sources.web_source import WebSource
 
-retriever_tool = create_retriever_tool(
-    retriever,
-    name="search_fred_macro_data",
-    description=(
-        "Searches for macroeconomic data from FRED CSV files using semantic similarity. "
-        "Good for general questions like 'What happened to CPI in 2020?' or 'Show me fed funds rate trends'. "
-        "NOT reliable for 'most recent' or 'latest' queries — use get_latest_data for those."
-    )
+logger = logging.getLogger(__name__)
+
+_web_source = WebSource(
+    vector_store_sync=vector_store_sync,
+    record_manager=record_manager,
+    firecrawl_api_key=FIRECRAWL_API_KEY,
 )
 
+_fred_source: FredApiSource | None = None
+if FRED_API_KEY:
+    try:
+        _fred_source = FredApiSource(
+            api_key=FRED_API_KEY,
+            vector_store_sync=vector_store_sync,
+            record_manager=record_manager,
+        )
+    except ValueError as e:
+        logger.warning("FredApiSource unavailable: %s", e)
+
+retriever = vector_store.as_retriever(search_kwargs={"k": 20})
+
+search_pgvector = create_retriever_tool(
+    retriever,
+    name="search_pgvector",
+    description=(
+        "Search all indexed research content using semantic similarity. "
+        "Covers FRED CSV data, research PDFs, web pages, and API-fetched series. "
+        "ALWAYS call this tool first before reaching for any live-fetch tool. "
+        "Good for questions like 'What happened to CPI in 2020?' or 'Fed funds rate trends'. "
+        "NOT reliable for 'most recent' / 'latest' queries — use get_latest_data for those."
+    ),
+)
 
 @tool
 async def get_latest_data(metric: str, n: int = 5) -> str:
-    """Get the N most recent data points for a specific FRED metric, sorted by date descending.
+    """Get the N most recent data points for a specific metric, sorted by date descending.
 
-    Use this tool when the user asks for the 'most recent', 'latest', or 'current' value of an indicator.
+    Use when the user asks for the 'most recent', 'latest', or 'current' value.
 
     Args:
-        metric: The metric name to search for (e.g. 'CPILFESL', 'DFF', 'FEDFUNDS', 'DGS2').
-                Available metrics: CPILFESL (Core CPI), DFF (Daily Fed Funds Rate),
-                FEDFUNDS (Monthly Fed Funds Rate), DGS2 (2-Year Treasury Yield).
+        metric: Series ID to look up (e.g. 'CPILFESL', 'DFF', 'FEDFUNDS', 'DGS2').
+                Available in DB: CPILFESL (Core CPI), DFF (Daily Fed Funds),
+                FEDFUNDS (Monthly Fed Funds), DGS2 (2-Year Treasury Yield).
         n: Number of most recent data points to return (default 5).
     """
-    # 2. Keep using the ASYNC store here because this is an async def tool
     results = await vector_store.asimilarity_search(
         query=f"most recent {metric} data",
         k=100,
         filter={"metric": metric},
     )
 
-    # Fallback: broader search filtered in Python (handles stored names like "CPILFESL (1)")
     if not results:
         results = await vector_store.asimilarity_search(
             query=f"most recent {metric} data",
@@ -47,41 +89,171 @@ async def get_latest_data(metric: str, n: int = 5) -> str:
         results = [doc for doc in results if metric in doc.metadata.get("metric", "")]
 
     if not results:
-        return f"No data found for metric '{metric}'."
+        return f"No data found for metric '{metric}' in the database."
 
-    # Sort by date descending and take the top N
-    sorted_results = sorted(results, key=lambda d: d.metadata.get("date", ""), reverse=True)
+    sorted_results = sorted(
+        results, key=lambda d: d.metadata.get("date", ""), reverse=True
+    )
     top_n = sorted_results[:n]
-
-    lines = [doc.page_content for doc in top_n]
-    return "\n".join(lines)
+    return "\n".join(doc.page_content for doc in top_n)
 
 
-system_prompt = (
-    "You are an assistant for macroeconomic analysis tasks. "
-    "You have access to FRED economic data including: "
-    "CPILFESL (Core CPI), DFF (Daily Fed Funds Rate), FEDFUNDS (Monthly Fed Funds Rate), DGS2 (2-Year Treasury Yield). "
-    "\n\n"
-    "TOOL SELECTION RULES:\n"
-    "- For 'most recent', 'latest', or 'current' data: ALWAYS use `get_latest_data` with the correct metric name.\n"
-    "- For historical questions, trends, or comparisons: use `search_fred_macro_data`.\n"
-    "\n"
-    "Always cite the exact date and value from the retrieved data. "
-    "If the retrieved context does not contain relevant information, say that you don't know."
-)
+@tool
+def fetch_fred_api(series_id: str, limit: int = 20) -> str:
+    """Fetch live economic data for a FRED series and index it for future queries.
+
+    Use when:
+    - The user asks for a FRED series that may not be in the database yet.
+    - The database results look stale and you need fresh observations.
+    - The user explicitly asks for 'live' or 'real-time' FRED data.
+
+    Args:
+        series_id: FRED series identifier (e.g. 'UNRATE', 'GDP', 'CPIAUCSL').
+                   Must be uppercase. See https://fred.stlouisfed.org for available series.
+        limit: Number of most recent observations to return (default 20).
+    """
+    if _fred_source is None:
+        return (
+            "FRED API source is not configured (FRED_API_KEY is missing). "
+            "Try search_pgvector for data already in the database."
+        )
+    docs = _fred_source.fetch(series_id)
+    if not docs:
+        return f"No data returned from FRED API for series '{series_id}'."
+    # Return the most recent `limit` observations
+    sorted_docs = sorted(
+        docs, key=lambda d: d.metadata.get("date", ""), reverse=True
+    )
+    return "\n".join(doc.page_content for doc in sorted_docs[:limit])
+
+
+@tool
+def fetch_web_page(url: str) -> str:
+    """Fetch a web page, extract its text content, and index it for future queries.
+
+    Use when:
+    - The user provides a specific URL (news article, Fed statement, report, whitepaper).
+    - The analysis agent needs content from an external source not yet in the database.
+
+    The page content is indexed immediately so subsequent calls for the same URL
+    are served from the database.
+
+    Args:
+        url: Full URL to fetch (e.g. 'https://www.federalreserve.gov/newsevents/...')
+    """
+    docs = _web_source.fetch(url)
+    if not docs:
+        return f"No content could be extracted from '{url}'."
+    return docs[0].page_content
+
+
+@tool
+def search_web_news(topic: str, max_results: int = 5) -> str:
+    """Search the web for recent news and analysis on a macroeconomic topic using Tavily.
+
+    Use when:
+    - The user wants recent news, commentary, or analyst views on a macro topic.
+    - The question is about something not captured in FRED data (e.g. policy rumours,
+      central bank speeches, inflation commentary, market reactions).
+
+    Results are indexed into the database so follow-up questions are fast.
+
+    Args:
+        topic: The macro topic to search (e.g. 'Fed rate cut expectations 2025',
+               'CPI inflation July 2025', 'Treasury yield curve inversion').
+        max_results: Number of search results to return (default 5).
+    """
+    if not TAVILY_API_KEY:
+        return (
+            "Web news search requires TAVILY_API_KEY. "
+            "Sign up free at https://tavily.com. "
+            "Use fetch_web_page with a specific URL as an alternative."
+        )
+    try:
+        from tavily import TavilyClient
+
+        client = TavilyClient(api_key=TAVILY_API_KEY)
+        response = client.search(
+            query=topic,
+            search_depth="advanced",
+            max_results=max_results,
+            include_answer=True,  # Tavily's synthesised answer snippet
+        )
+
+        results = response.get("results", [])
+        if not results:
+            return f"No web results found for '{topic}'."
+
+        snippets: list[str] = []
+
+        # Include Tavily's synthesised answer if present
+        answer = response.get("answer", "")
+        if answer:
+            snippets.append(f"**Summary**: {answer}")
+
+        for item in results:
+            url = item.get("url", "")
+            title = item.get("title", "")
+            content = item.get("content", "")[:600]
+            if url and content:
+                # Index the full page in the background for future retrieval
+                try:
+                    _web_source.fetch(url)
+                except Exception:
+                    pass  # Non-fatal — snippet is still returned
+                snippets.append(f"**{title}**\n[{url}]\n{content}")
+
+        return "\n\n---\n\n".join(snippets) if snippets else "No useful results found."
+
+    except ImportError:
+        return "tavily-python is not installed. Run: uv add tavily-python"
+    except Exception as exc:
+        logger.error("search_web_news failed for '%s': %s", topic, exc)
+        return f"Web news search failed: {exc}"
+
+
+system_prompt = """\
+You are a macroeconomic researcher agent. Your job is to find the most accurate,
+up-to-date information available and return it with clear citations.
+
+You have access to five tools. Use them in this order of preference:
+
+1. search_pgvector — ALWAYS try this first. It searches all indexed research
+   content (FRED CSV files, PDFs, web pages, API data).
+
+2. get_latest_data — When the question is about the "most recent" or "current"
+   value of a known metric (CPILFESL, DFF, FEDFUNDS, DGS2). Specify the exact
+   series ID in uppercase.
+
+3. fetch_fred_api — When the metric isn't in the database yet, or the user
+   explicitly wants live FRED data. Series IDs must be uppercase FRED identifiers.
+
+4. fetch_web_page — When the user provides a specific URL or you need to read
+   a Fed statement, news article, or research report.
+
+5. search_web_news — When the user wants recent news or commentary on a macro
+   topic and no URL is provided. Powered by Tavily search.
+
+RULES:
+- Always cite the exact date and value from retrieved data.
+- If search_pgvector returns nothing useful, escalate to the appropriate live tool.
+- Every piece of data fetched via tools 3–5 is automatically indexed, so you
+  can follow up with search_pgvector to find it.
+- If no source has the information, say so clearly. Do not fabricate data.
+"""
 
 retrieval_agent = create_agent(
     model=llm,
-    tools=[retriever_tool, get_latest_data],
-    system_prompt=system_prompt
+    tools=[search_pgvector, get_latest_data, fetch_fred_api, fetch_web_page, search_web_news],
+    system_prompt=system_prompt,
 )
 
-async def main():
-    inputs = {"messages": [HumanMessage(content="What is the most recent CPI data?")]}
 
+async def main():
+    inputs = {"messages": [HumanMessage(content="What is the most recent Fed Funds rate?")]}
     async for chunk in retrieval_agent.astream(inputs, stream_mode="values"):
-        last_message = chunk["messages"][-1]
-        last_message.pretty_print()
+        chunk["messages"][-1].pretty_print()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
