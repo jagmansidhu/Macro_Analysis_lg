@@ -132,10 +132,13 @@ class TestLatestDataTool:
 
 class TestNoHallucination:
     async def test_agent_admits_ignorance_for_unknown_metric(self):
-        response = await _ask("What is the current NASDAQ composite value?")
-        hallucinated = re.findall(r"\b\d{4,}\b", response)  # 4+ digit numbers
+        response = await _ask("What is the current FAKE_XYZ_METRIC value?")
+        # It shouldn't return fabricated numbers for a fake metric
+        hallucinated = re.findall(r"\b\d{4,}\b", response)
+        # Filter out current years like 2025, 2026 in case it says "As of 2026..."
+        hallucinated = [h for h in hallucinated if not (len(h) == 4 and h.startswith("202"))]
         assert len(hallucinated) == 0, (
-            f"Agent may have hallucinated values for NASDAQ: {hallucinated}\n"
+            f"Agent may have hallucinated values for fake metric: {hallucinated}\n"
             f"Full response: {response}"
         )
 
