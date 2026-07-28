@@ -150,10 +150,6 @@ class TestIngestCorrectness:
             assert isinstance(doc.metadata["year"], int)
 
 
-# ---------------------------------------------------------------------------
-# Deduplication
-# ---------------------------------------------------------------------------
-
 class TestDeduplication:
     def test_second_ingest_adds_zero_docs(
             self, test_vector_store, test_record_manager, cpilfesl_docs
