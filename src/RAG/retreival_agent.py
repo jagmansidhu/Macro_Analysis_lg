@@ -1,12 +1,13 @@
 """RAG Orchestrator — the researcher brain.
 
-Exposes a five-tool ReAct agent to any analysis agent that needs information:
+Exposes a six-tool ReAct agent to any analysis agent that needs information:
 
-  1. search_pgvector      — semantic search over all indexed content (always first)
-  2. get_latest_data      — most-recent N rows for a known metric, sorted by date
-  3. fetch_fred_api       — pull live FRED series data and index it
-  4. fetch_web_page       — scrape a URL via Firecrawl / httpx and index it
-  5. search_web_news      — Firecrawl-powered news search for macro topics
+  1. search_pgvector        — semantic search over all indexed content (always first)
+  2. get_latest_data        — most-recent N rows for a known metric, sorted by date
+  3. fetch_fred_api         — pull live FRED series data and index it
+  4. fetch_web_page         — scrape a URL via Firecrawl / httpx and index it
+  5. search_web_news        — broad web news search for macro topics (Tavily)
+  6. search_financial_news  — domain-filtered financial news + analyst sentiment
 
 Routing rules (embedded in system prompt):
   - Always try search_pgvector first (fast, free, cached).
@@ -14,6 +15,9 @@ Routing rules (embedded in system prompt):
   - For a FRED series not in the DB or if DB results are stale: use fetch_fred_api.
   - For news articles, reports, or arbitrary URLs: use fetch_web_page.
   - For broad macro news queries: use search_web_news.
+  - For analyst views, market sentiment, or outlet-specific financial coverage:
+    use search_financial_news (defaults to CNBC/Bloomberg/Reuters/FT/WSJ;
+    override domains for topic-specific sources e.g. WOWA for Canadian mortgages).
 """
 
 import asyncio
@@ -212,11 +216,136 @@ def search_web_news(topic: str, max_results: int = 5) -> str:
         return f"Web news search failed: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# Tool 6 — Financial news search with analyst sentiment
+# ---------------------------------------------------------------------------
+
+# Default outlets strongly preferred for financial/macro topics.
+# The agent can pass a custom list via the `domains` argument when a
+# topic-specific source is more authoritative (e.g. "wowa.ca" for Canadian
+# mortgage rates, "bis.org" for international settlements).
+DEFAULT_FINANCIAL_DOMAINS: list[str] = [
+    "cnbc.com",
+    "bloomberg.com",
+    "reuters.com",
+    "ft.com",
+    "wsj.com",
+    "marketwatch.com",
+    "barrons.com",
+]
+
+
+@tool
+def search_financial_news(
+    topic: str,
+    time_range: str = "week",
+    max_results: int = 5,
+    domains: list[str] | None = None,
+) -> str:
+    """Search financial news outlets for a macro topic and extract analyst sentiment.
+
+    By default restricts results to: CNBC, Bloomberg, Reuters, FT, WSJ,
+    MarketWatch, Barron's. Pass a custom `domains` list to override for
+    topic-specific sources (e.g. ["wowa.ca"] for Canadian mortgage data,
+    ["bis.org"] for international banking settlements, ["bank-banque-canada.ca"]
+    for Bank of Canada commentary).
+
+    Returns article snippets from each outlet, then a synthesised analyst
+    sentiment (Bullish / Bearish / Mixed) based on the retrieved content.
+
+    Use when:
+    - The user asks for analyst views, market sentiment, price targets, or
+      upgrade/downgrade commentary.
+    - The user specifically wants CNBC, Bloomberg, or Reuters coverage.
+    - A regional or specialist source is more appropriate for the topic
+      (specify it via the `domains` argument).
+
+    Args:
+        topic: The financial/macro topic (e.g. 'Fed rate cut Wall Street reaction',
+               'S&P 500 analyst outlook', 'Canadian mortgage rate forecast wowa').
+        time_range: Recency — 'day', 'week' (default), 'month', or 'year'.
+        max_results: Number of articles to return (default 5).
+        domains: Override the default outlet list. Pass an empty list to search
+                 all domains (no filter). Pass specific domains for topic-specialist
+                 sources. Defaults to the major financial news outlets.
+    """
+    if not TAVILY_API_KEY:
+        return (
+            "search_financial_news requires TAVILY_API_KEY. "
+            "Sign up free at https://tavily.com. "
+            "Use fetch_web_page with a specific URL as an alternative."
+        )
+    try:
+        from tavily import TavilyClient
+
+        active_domains = DEFAULT_FINANCIAL_DOMAINS if domains is None else domains
+
+        client = TavilyClient(api_key=TAVILY_API_KEY)
+        search_kwargs: dict = {
+            "query": topic,
+            "topic": "finance",
+            "search_depth": "advanced",
+            "time_range": time_range,
+            "max_results": max_results,
+            "include_answer": True,
+        }
+        if active_domains:
+            search_kwargs["include_domains"] = active_domains
+
+        response = client.search(**search_kwargs)
+
+        results = response.get("results", [])
+        if not results:
+            domain_hint = f" in {active_domains}" if active_domains else ""
+            return f"No financial news found for '{topic}'{domain_hint}."
+
+        snippets: list[str] = []
+
+        # Tavily's synthesised answer (finance-tuned)
+        answer = response.get("answer", "")
+        if answer:
+            snippets.append(f"**Market Summary**: {answer}")
+
+        raw_texts: list[str] = []
+        for item in results:
+            url = item.get("url", "")
+            title = item.get("title", "")
+            content = item.get("content", "")[:800]
+            source_domain = item.get("source", url)
+            if url and content:
+                raw_texts.append(content)
+                # Index the full page for future retrieval
+                try:
+                    _web_source.fetch(url)
+                except Exception:
+                    pass
+                snippets.append(f"**{title}** ({source_domain})\n[{url}]\n{content}")
+
+        # Append a sentiment block for the agent to reason over
+        if raw_texts:
+            snippets.append(
+                "\n---\n"
+                "**Analyst Sentiment Signals** (extracted from above articles):\n"
+                "Look for: upgrades/downgrades, price target changes, recession risk language, "
+                "rate cut/hike expectations, earnings revisions. "
+                "Classify overall sentiment as: Bullish | Bearish | Mixed — "
+                "with a one-sentence rationale citing specific sources above."
+            )
+
+        return "\n\n---\n\n".join(snippets) if snippets else "No useful financial news found."
+
+    except ImportError:
+        return "tavily-python is not installed. Run: uv add tavily-python"
+    except Exception as exc:
+        logger.error("search_financial_news failed for '%s': %s", topic, exc)
+        return f"Financial news search failed: {exc}"
+
+
 system_prompt = """\
 You are a macroeconomic researcher agent. Your job is to find the most accurate,
 up-to-date information available and return it with clear citations.
 
-You have access to five tools. Use them in this order of preference:
+You have access to six tools. Use them in this order of preference:
 
 1. search_pgvector — ALWAYS try this first. It searches all indexed research
    content (FRED CSV files, PDFs, web pages, API data).
@@ -234,17 +363,38 @@ You have access to five tools. Use them in this order of preference:
 5. search_web_news — When the user wants recent news or commentary on a macro
    topic and no URL is provided. Powered by Tavily search.
 
+6. search_financial_news — When the user wants analyst views, market sentiment,
+   price target commentary, or coverage from specific financial outlets.
+   - DEFAULT behaviour: searches CNBC, Bloomberg, Reuters, FT, WSJ, MarketWatch.
+   - OVERRIDE domains when a specialist source is more authoritative:
+       • Canadian mortgage rates  → domains=["wowa.ca", "ratehub.ca"]
+       • Bank of Canada policy    → domains=["bank-banque-canada.ca"]
+       • International settlements → domains=["bis.org"]
+       • Crypto/DeFi topics       → domains=["coindesk.com", "theblock.co"]
+       • Leave domains=[] to search all financial domains without restriction.
+   - Always prefer search_financial_news over search_web_news when the question
+     involves analyst sentiment, upgrades/downgrades, or price targets.
+
 RULES:
 - Always cite the exact date and value from retrieved data.
 - If search_pgvector returns nothing useful, escalate to the appropriate live tool.
-- Every piece of data fetched via tools 3–5 is automatically indexed, so you
+- Every piece of data fetched via tools 3–6 is automatically indexed, so you
   can follow up with search_pgvector to find it.
+- For search_financial_news results: always include the Bullish/Bearish/Mixed
+  sentiment classification with a one-sentence rationale.
 - If no source has the information, say so clearly. Do not fabricate data.
 """
 
 retrieval_agent = create_agent(
     model=llm,
-    tools=[search_pgvector, get_latest_data, fetch_fred_api, fetch_web_page, search_web_news],
+    tools=[
+        search_pgvector,
+        get_latest_data,
+        fetch_fred_api,
+        fetch_web_page,
+        search_web_news,
+        search_financial_news,
+    ],
     system_prompt=system_prompt,
 )
 
